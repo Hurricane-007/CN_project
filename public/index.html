@@ -125,12 +125,15 @@
                             <span id="playing-views" class="meta-chip">0 views</span>
                             <span class="meta-chip" id="playback-speed-display">1× speed</span>
                         </div>
-                        <div class="speed-controls">
-                            <span class="control-label">Playback Speed:</span>
-                            <button class="speed-btn" onclick="setSpeed(0.5)">0.5×</button>
-                            <button class="speed-btn active" onclick="setSpeed(1)">1×</button>
-                            <button class="speed-btn" onclick="setSpeed(1.5)">1.5×</button>
-                            <button class="speed-btn" onclick="setSpeed(2)">2×</button>
+                        <div class="player-controls-row">
+                            <button class="btn-play-pause" id="play-pause-btn" onclick="togglePlay()">Play</button>
+                            <div class="speed-controls">
+                                <span class="control-label">Speed:</span>
+                                <button class="speed-btn" onclick="setSpeed(0.5)">0.5×</button>
+                                <button class="speed-btn active" onclick="setSpeed(1)">1×</button>
+                                <button class="speed-btn" onclick="setSpeed(1.5)">1.5×</button>
+                                <button class="speed-btn" onclick="setSpeed(2)">2×</button>
+                            </div>
                         </div>
                     </div>
                 </div>

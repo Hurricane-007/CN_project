@@ -178,7 +178,24 @@ body {
 @media (max-width:1100px) { .player-layout { grid-template-columns:1fr; } }
 .player-wrap { position:relative;border-radius:var(--radius-md);overflow:hidden;background:#000;box-shadow:0 8px 40px rgba(0,0,0,0.6),0 0 0 1px var(--border); }
 #video-player { width:100%;display:block;border-radius:var(--radius-md); }
-.player-overlay { position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0);opacity:0;cursor:pointer;transition:opacity 0.2s; }
+.player-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.4);
+    opacity: 0;
+    pointer-events: none;
+    cursor: pointer;
+    transition: opacity 0.3s ease;
+    z-index: 10;
+}
+.player-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
 .play-btn-big { font-size:3rem;color:rgba(255,255,255,0.9);line-height:1; }
 .player-info { padding:1.5rem 0; }
 .player-title-row { display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem;flex-wrap:wrap; }
@@ -190,7 +207,34 @@ body {
 .speed-controls { display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap; }
 .control-label { font-size:0.8rem;color:var(--text-secondary); }
 .speed-btn { padding:0.35rem 0.75rem;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;font-size:0.8rem;cursor:pointer;transition:all 0.2s; }
-.speed-btn.active, .speed-btn:hover { background:var(--accent);border-color:var(--accent);color:#fff; }
+.speed-btn.active, .speed-btn:hover { background:var(--accent); border-color:var(--accent); color:#fff; }
+
+.player-controls-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    margin-top: 0.5rem;
+}
+.btn-play-pause {
+    padding: 0.6rem 1.5rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    min-width: 100px;
+}
+.btn-play-pause:hover {
+    background: var(--accent-light);
+    transform: translateY(-1px);
+}
+.btn-play-pause.paused {
+    background: var(--cyan);
+}
 
 /* ─── Player Sidebar ──────────────────────────────────── */
 .player-sidebar { padding:1.5rem;position:sticky;top:calc(var(--nav-h) + 1rem); }

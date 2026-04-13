@@ -200,8 +200,8 @@ app.get('/stream/:videoId', authRequired, (req, res) => {
         // Server responds with only that chunk
         const parts  = rangeHeader.replace(/bytes=/, '').split('-');
         const start  = parseInt(parts[0], 10);
-        const end    = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 1024*1024 - 1, fileSize - 1);
-        const chunkSize = end - start + 1;
+        const end    = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        const chunkSize = (end - start) + 1;
 
         // Update bandwidth stats
         if (videoStats[videoId]) videoStats[videoId].bytes += chunkSize;
