@@ -74,7 +74,12 @@ app.post('/api/auth/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
     users[username] = { passwordHash, watchHistory: [], cache: [] };
     const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '7d' });
-    res.cookie('token', token, { httpOnly: true, maxAge: 7*24*3600*1000 });
+    res.cookie('token', token, {
+    httpOnly: true,
+    maxAge: 7 * 24 * 3600 * 1000,
+    secure: true,
+    sameSite: "none"
+});
     res.json({ message: 'Registered successfully', username });
 });
 
@@ -85,7 +90,12 @@ app.post('/api/auth/login', async (req, res) => {
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
     const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '7d' });
-    res.cookie('token', token, { httpOnly: true, maxAge: 7*24*3600*1000 });
+    res.cookie('token', token, {
+    httpOnly: true,
+    maxAge: 7 * 24 * 3600 * 1000,
+    secure: true,
+    sameSite: "none"
+});
     res.json({ message: 'Login successful', username });
 });
 
