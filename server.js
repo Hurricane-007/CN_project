@@ -6,6 +6,7 @@
  * ============================================================
  */
 
+require('dotenv').config();
 const express       = require('express');
 const fs            = require('fs');
 const path          = require('path');
@@ -14,10 +15,41 @@ const bcrypt        = require('bcryptjs');
 const cookieParser  = require('cookie-parser');
 const cors          = require('cors');
 const { v4: uuidv4 } = require('uuid');
+const mongoose      = require('mongoose');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = 'cn_project_secret_key_2024';
+const JWT_SECRET = process.env.JWT_SECRET || 'cn_project_secret_key_2024';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/cn_project';
+
+// ── MongoDB Connection ────────────────────────────────────────
+mongoose.connect(MONGODB_URI)
+    .then(() => console.log('✅ Connected to MongoDB'))
+    .catch(err => console.error('❌ MongoDB connection error:', err));
+
+// ── Mongoose Schemas ──────────────────────────────────────────
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    passwordHash: { type: String, required: true },
+    cache: [{
+        videoId: String,
+        progress: Number,
+        watchedAt: { type: Date, default: Date.now }
+    }],
+    watchHistory: [{
+        videoId: String,
+        watchedAt: { type: Date, default: Date.now }
+    }]
+});
+const User = mongoose.model('User', userSchema);
+
+const videoStatSchema = new mongoose.Schema({
+    videoId: { type: String, required: true, unique: true },
+    views: { type: Number, default: 0 },
+    bytes: { type: Number, default: 0 },
+    filename: String
+});
+const VideoStat = mongoose.model('VideoStat', videoStatSchema);
 
 // ── Middleware ────────────────────────────────────────────────
 app.use(express.json());
@@ -25,33 +57,38 @@ app.use(cookieParser());
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── In-Memory "Database" (no DB dependency for portability) ──
-const users = {};          // { username: { passwordHash, watchHistory, cache } }
-const sessions = {};       // JWT sessions map
-const videoStats = {};     // per-video view/bandwidth stats
+// ── (In-memory objects removed, now using MongoDB) ──────────
 
 // ── Video Metadata ─────────────────────────────────────────────
 const VIDEO_DIR = path.join(__dirname, 'videos');
 if (!fs.existsSync(VIDEO_DIR)) fs.mkdirSync(VIDEO_DIR, { recursive: true });
 
-function getVideoList() {
+async function getVideoListWithStats() {
     if (!fs.existsSync(VIDEO_DIR)) return [];
-    return fs.readdirSync(VIDEO_DIR)
-        .filter(f => /\.(mp4|webm|ogg|mkv|mov)$/i.test(f))
-        .map(filename => {
-            const stat = fs.statSync(path.join(VIDEO_DIR, filename));
-            const name = filename.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-            const vid  = Buffer.from(filename).toString('base64').replace(/[^a-zA-Z0-9]/g,'').slice(0,12);
-            if (!videoStats[vid]) videoStats[vid] = { views: 0, bytes: 0, filename };
-            return {
-                id: vid,
-                filename,
-                title: name.charAt(0).toUpperCase() + name.slice(1),
-                size: stat.size,
-                sizeMB: (stat.size / (1024*1024)).toFixed(2),
-                mtime: stat.mtime
-            };
-        });
+    const files = fs.readdirSync(VIDEO_DIR).filter(f => /\.(mp4|webm|ogg|mkv|mov)$/i.test(f));
+    
+    const videos = await Promise.all(files.map(async (filename) => {
+        const stat = fs.statSync(path.join(VIDEO_DIR, filename));
+        const name = filename.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+        const vid  = Buffer.from(filename).toString('base64').replace(/[^a-zA-Z0-9]/g,'').slice(0,12);
+        
+        // Ensure stat entry exists in DB
+        let dbStat = await VideoStat.findOne({ videoId: vid });
+        if (!dbStat) {
+            dbStat = await VideoStat.create({ videoId: vid, filename });
+        }
+
+        return {
+            id: vid,
+            filename,
+            title: name.charAt(0).toUpperCase() + name.slice(1),
+            size: stat.size,
+            sizeMB: (stat.size / (1024*1024)).toFixed(2),
+            mtime: stat.mtime,
+            views: dbStat.views
+        };
+    }));
+    return videos;
 }
 
 // ── Auth Middleware ───────────────────────────────────────────
@@ -70,32 +107,38 @@ function authRequired(req, res, next) {
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-    if (users[username]) return res.status(409).json({ error: 'Username already exists' });
+    
+    const existing = await User.findOne({ username });
+    if (existing) return res.status(409).json({ error: 'Username already exists' });
+    
     const passwordHash = await bcrypt.hash(password, 10);
-    users[username] = { passwordHash, watchHistory: [], cache: [] };
+    await User.create({ username, passwordHash, watchHistory: [], cache: [] });
+    
     const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '7d' });
     res.cookie('token', token, {
-    httpOnly: true,
-    maxAge: 7 * 24 * 3600 * 1000,
-    secure: true,
-    sameSite: "none"
-});
+        httpOnly: true,
+        maxAge: 7 * 24 * 3600 * 1000,
+        secure: true,
+        sameSite: "none"
+    });
     res.json({ message: 'Registered successfully', username });
 });
 
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
-    const user = users[username];
+    const user = await User.findOne({ username });
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    
     const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '7d' });
     res.cookie('token', token, {
-    httpOnly: true,
-    maxAge: 7 * 24 * 3600 * 1000,
-    secure: true,
-    sameSite: "none"
-});
+        httpOnly: true,
+        maxAge: 7 * 24 * 3600 * 1000,
+        secure: true,
+        sameSite: "none"
+    });
     res.json({ message: 'Login successful', username });
 });
 
@@ -109,25 +152,19 @@ app.get('/api/auth/me', authRequired, (req, res) => {
 });
 
 // ── Video List ────────────────────────────────────────────────
-app.get('/api/videos', authRequired, (req, res) => {
-    const videos = getVideoList();
-    // Attach view stats
-    const enriched = videos.map(v => ({
-        ...v,
-        views: videoStats[v.id]?.views || 0
-    }));
-    res.json({ videos: enriched });
+app.get('/api/videos', authRequired, async (req, res) => {
+    const videos = await getVideoListWithStats();
+    res.json({ videos });
 });
 
 // ── Cache API (Recently Viewed) ───────────────────────────────
-app.get('/api/cache', authRequired, (req, res) => {
-    const user = users[req.user.username];
+app.get('/api/cache', authRequired, async (req, res) => {
+    const user = await User.findOne({ username: req.user.username });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const allVideos = getVideoList();
+    const allVideos = await getVideoListWithStats();
     const videoMap  = Object.fromEntries(allVideos.map(v => [v.id, v]));
 
-    // Resolve cached video metadata (most recent first, deduplicated)
     const seen = new Set();
     const cacheList = (user.cache || [])
         .slice()
@@ -135,60 +172,58 @@ app.get('/api/cache', authRequired, (req, res) => {
         .filter(entry => {
             if (seen.has(entry.videoId)) return false;
             seen.add(entry.videoId);
-            return videoMap[entry.videoId]; // only if video still exists
+            return videoMap[entry.videoId];
         })
         .map(entry => ({
             ...videoMap[entry.videoId],
             watchedAt: entry.watchedAt,
             progress: entry.progress || 0
         }))
-        .slice(0, 10); // keep last 10 unique
+        .slice(0, 10);
 
-    res.set('Cache-Control', 'no-store'); // Demonstrate cache header
+    res.set('Cache-Control', 'no-store');
     res.json({ cache: cacheList });
 });
 
-app.post('/api/cache', authRequired, (req, res) => {
+app.post('/api/cache', authRequired, async (req, res) => {
     const { videoId, progress } = req.body;
-    const user = users[req.user.username];
+    const user = await User.findOne({ username: req.user.username });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // Keep rolling cache of last 50 entries
-    user.cache.push({ videoId, progress: progress || 0, watchedAt: new Date().toISOString() });
+    user.cache.push({ videoId, progress: progress || 0, watchedAt: new Date() });
     if (user.cache.length > 50) user.cache = user.cache.slice(-50);
 
-    // Also update watch history
-    user.watchHistory.push({ videoId, watchedAt: new Date().toISOString() });
+    user.watchHistory.push({ videoId, watchedAt: new Date() });
+    await user.save();
 
     res.json({ message: 'Cache updated' });
 });
 
-app.delete('/api/cache', authRequired, (req, res) => {
-    const user = users[req.user.username];
+app.delete('/api/cache', authRequired, async (req, res) => {
+    const user = await User.findOne({ username: req.user.username });
     if (!user) return res.status(404).json({ error: 'User not found' });
     user.cache = [];
+    await user.save();
     res.json({ message: 'Cache cleared' });
 });
 
 // ── Network Stats (for CN analysis dashboard) ─────────────────
-app.get('/api/stats', authRequired, (req, res) => {
-    const videos = getVideoList();
-    const statsWithMeta = videos.map(v => ({
-        ...v,
-        ...videoStats[v.id]
-    }));
+app.get('/api/stats', authRequired, async (req, res) => {
+    const videos = await getVideoListWithStats();
+    const stats = await VideoStat.find();
+    const userCount = await User.countDocuments();
+    
     res.json({
         totalVideos: videos.length,
-        totalUsers: Object.keys(users).length,
-        videoStats: statsWithMeta
+        totalUsers: userCount,
+        videoStats: stats
     });
 });
 
 // ── HTTP Range-Based Video Streaming ──────────────────────────
-// This is the core CN concept: partial content delivery (RFC 7233)
-app.get('/stream/:videoId', authRequired, (req, res) => {
+app.get('/stream/:videoId', authRequired, async (req, res) => {
     const { videoId } = req.params;
-    const videos = getVideoList();
+    const videos = await getVideoListWithStats();
     const video  = videos.find(v => v.id === videoId);
 
     if (!video) return res.status(404).json({ error: 'Video not found' });
@@ -197,7 +232,6 @@ app.get('/stream/:videoId', authRequired, (req, res) => {
     const stat     = fs.statSync(filePath);
     const fileSize = stat.size;
 
-    // Determine MIME type
     const ext  = path.extname(video.filename).toLowerCase();
     const mime = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.ogg': 'video/ogg',
                    '.mkv': 'video/x-matroska', '.mov': 'video/quicktime' }[ext] || 'video/mp4';
@@ -205,23 +239,19 @@ app.get('/stream/:videoId', authRequired, (req, res) => {
     const rangeHeader = req.headers.range;
 
     if (rangeHeader) {
-        // ── PARTIAL CONTENT (HTTP 206) — The heart of video streaming ──
-        // Browser sends Range: bytes=start-end
-        // Server responds with only that chunk
         const parts  = rangeHeader.replace(/bytes=/, '').split('-');
         const start  = parseInt(parts[0], 10);
         const end    = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
         const chunkSize = (end - start) + 1;
 
-        // Update bandwidth stats
-        if (videoStats[videoId]) videoStats[videoId].bytes += chunkSize;
+        // Update bandwidth stats in DB
+        await VideoStat.findOneAndUpdate({ videoId }, { $inc: { bytes: chunkSize } });
 
         res.writeHead(206, {
             'Content-Range':  `bytes ${start}-${end}/${fileSize}`,
             'Accept-Ranges':  'bytes',
             'Content-Length': chunkSize,
             'Content-Type':   mime,
-            // CN Concept: Cache headers
             'Cache-Control':  'no-cache',
             'X-Stream-Chunk': chunkSize,
             'X-File-Size':    fileSize
@@ -229,16 +259,11 @@ app.get('/stream/:videoId', authRequired, (req, res) => {
 
         const stream = fs.createReadStream(filePath, { start, end });
         stream.pipe(res);
-
-        // Log for CN analysis
         console.log(`[STREAM] ${video.filename} | Range: ${start}-${end} | Chunk: ${(chunkSize/1024).toFixed(1)}KB`);
 
     } else {
-        // ── FULL FILE (HTTP 200) ──
-        if (videoStats[videoId]) {
-            videoStats[videoId].views += 1;
-            videoStats[videoId].bytes += fileSize;
-        }
+        // Update stats in DB
+        await VideoStat.findOneAndUpdate({ videoId }, { $inc: { views: 1, bytes: fileSize } });
 
         res.writeHead(200, {
             'Content-Length': fileSize,
@@ -253,12 +278,10 @@ app.get('/stream/:videoId', authRequired, (req, res) => {
 });
 
 // ── View count increment ──────────────────────────────────────
-app.post('/api/videos/:videoId/view', authRequired, (req, res) => {
+app.post('/api/videos/:videoId/view', authRequired, async (req, res) => {
     const { videoId } = req.params;
-    if (videoStats[videoId]) {
-        videoStats[videoId].views += 1;
-    }
-    res.json({ views: videoStats[videoId]?.views || 1 });
+    const stat = await VideoStat.findOneAndUpdate({ videoId }, { $inc: { views: 1 } }, { new: true });
+    res.json({ views: stat?.views || 1 });
 });
 
 // ── Serve frontend for all other routes ──────────────────────
