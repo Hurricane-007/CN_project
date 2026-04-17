@@ -63,32 +63,23 @@ app.use(express.static(path.join(__dirname, 'public')));
 const VIDEO_DIR = path.join(__dirname, 'videos');
 if (!fs.existsSync(VIDEO_DIR)) fs.mkdirSync(VIDEO_DIR, { recursive: true });
 
-async function getVideoListWithStats() {
+function getVideoList() {
     if (!fs.existsSync(VIDEO_DIR)) return [];
-    const files = fs.readdirSync(VIDEO_DIR).filter(f => /\.(mp4|webm|ogg|mkv|mov)$/i.test(f));
-    
-    const videos = await Promise.all(files.map(async (filename) => {
-        const stat = fs.statSync(path.join(VIDEO_DIR, filename));
-        const name = filename.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-        const vid  = Buffer.from(filename).toString('base64').replace(/[^a-zA-Z0-9]/g,'').slice(0,12);
-        
-        // Ensure stat entry exists in DB
-        let dbStat = await VideoStat.findOne({ videoId: vid });
-        if (!dbStat) {
-            dbStat = await VideoStat.create({ videoId: vid, filename });
-        }
-
-        return {
-            id: vid,
-            filename,
-            title: name.charAt(0).toUpperCase() + name.slice(1),
-            size: stat.size,
-            sizeMB: (stat.size / (1024*1024)).toFixed(2),
-            mtime: stat.mtime,
-            views: dbStat.views
-        };
-    }));
-    return videos;
+    return fs.readdirSync(VIDEO_DIR)
+        .filter(f => /\.(mp4|webm|ogg|mkv|mov)$/i.test(f))
+        .map(filename => {
+            const stat = fs.statSync(path.join(VIDEO_DIR, filename));
+            const name = filename.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+            const vid  = Buffer.from(filename).toString('base64').replace(/[^a-zA-Z0-9]/g,'').slice(0,12);
+            return {
+                id: vid,
+                filename,
+                title: name.charAt(0).toUpperCase() + name.slice(1),
+                size: stat.size,
+                sizeMB: (stat.size / (1024*1024)).toFixed(2),
+                mtime: stat.mtime
+            };
+        });
 }
 
 // ── Auth Middleware ───────────────────────────────────────────
@@ -118,8 +109,8 @@ app.post('/api/auth/register', async (req, res) => {
     res.cookie('token', token, {
         httpOnly: true,
         maxAge: 7 * 24 * 3600 * 1000,
-        secure: true,
-        sameSite: "none"
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
     });
     res.json({ message: 'Registered successfully', username });
 });
@@ -136,8 +127,8 @@ app.post('/api/auth/login', async (req, res) => {
     res.cookie('token', token, {
         httpOnly: true,
         maxAge: 7 * 24 * 3600 * 1000,
-        secure: true,
-        sameSite: "none"
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
     });
     res.json({ message: 'Login successful', username });
 });
@@ -153,8 +144,18 @@ app.get('/api/auth/me', authRequired, (req, res) => {
 
 // ── Video List ────────────────────────────────────────────────
 app.get('/api/videos', authRequired, async (req, res) => {
-    const videos = await getVideoListWithStats();
-    res.json({ videos });
+    const videos = getVideoList();
+    console.log(`[API] Library request from ${req.user.username}. Found ${videos.length} videos on disk.`);
+    
+    // Optionally attach stats if available, but don't block
+    const stats = await VideoStat.find({ videoId: { $in: videos.map(v => v.id) } }).lean();
+    const statMap = Object.fromEntries(stats.map(s => [s.videoId, s]));
+    
+    const enriched = videos.map(v => ({
+        ...v,
+        views: statMap[v.id]?.views || 0
+    }));
+    res.json({ videos: enriched });
 });
 
 // ── Cache API (Recently Viewed) ───────────────────────────────
@@ -162,7 +163,7 @@ app.get('/api/cache', authRequired, async (req, res) => {
     const user = await User.findOne({ username: req.user.username });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const allVideos = await getVideoListWithStats();
+    const allVideos = getVideoList();
     const videoMap  = Object.fromEntries(allVideos.map(v => [v.id, v]));
 
     const seen = new Set();
@@ -209,8 +210,8 @@ app.delete('/api/cache', authRequired, async (req, res) => {
 
 // ── Network Stats (for CN analysis dashboard) ─────────────────
 app.get('/api/stats', authRequired, async (req, res) => {
-    const videos = await getVideoListWithStats();
-    const stats = await VideoStat.find();
+    const videos    = getVideoList();
+    const stats     = await VideoStat.find().lean();
     const userCount = await User.countDocuments();
     
     res.json({
@@ -223,7 +224,7 @@ app.get('/api/stats', authRequired, async (req, res) => {
 // ── HTTP Range-Based Video Streaming ──────────────────────────
 app.get('/stream/:videoId', authRequired, async (req, res) => {
     const { videoId } = req.params;
-    const videos = await getVideoListWithStats();
+    const videos = getVideoList();
     const video  = videos.find(v => v.id === videoId);
 
     if (!video) return res.status(404).json({ error: 'Video not found' });

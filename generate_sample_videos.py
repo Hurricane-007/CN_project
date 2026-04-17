@@ -58,7 +58,7 @@ for v in samples:
         '-f', 'lavfi', '-i', f"sine=frequency=440:sample_rate=44100:duration={v['duration']}",
         '-vf', (
             f"drawtext=text='{v['text']}':fontcolor={v['textcolor']}:fontsize=52:"
-            f"x=(w-text_w)/2:y=(h-text_h)/2:fontfamily=monospace,"
+            f"x=(w-text_w)/2:y=(h-text_h)/2,"
             f"drawtext=text='StreamNet CN Project':fontcolor=white@0.4:fontsize=24:"
             f"x=(w-text_w)/2:y=(h-text_h)/2+80,"
             f"drawtext=text='HTTP/1.1  •  Range Requests  •  206 Partial Content':"

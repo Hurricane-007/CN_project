@@ -128,10 +128,16 @@ async function loadVideos() {
 
     try {
         const res  = await fetch('/api/videos', { credentials: 'include' });
+        if (!res.ok) {
+            const data = await res.json();
+            showToast(data.error || 'Failed to load videos', 'error');
+            if (res.status === 401) handleLogout();
+            return;
+        }
         const data = await res.json();
         allVideos  = data.videos || [];
         renderVideoGrid(allVideos);
-    } catch {
+    } catch (err) {
         showToast('Could not load videos. Is the server running?', 'error');
     }
 }
